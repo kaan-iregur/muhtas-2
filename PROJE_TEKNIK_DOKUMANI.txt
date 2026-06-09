@@ -1,0 +1,1072 @@
+
+================================================================================
+     İHA SES TABANLI SINIFLANDIRMA SİSTEMİ — TAM TEKNİK DOKÜMANTASYON
+         Jetson Nano Orin Üzerinde Gerçek Zamanlı IHA Kimlik Tespiti
+================================================================================
+
+Hazırlayan : [İsminiz]
+Tarih       : 2025
+Platform    : NVIDIA Jetson Orin Nano
+Dil         : Python 3.10+
+Yöntemler   : MDWT, TSK-LHP, Mutual Information, Chi-Squared,
+               k-NN, SVM (Kübik Kernel), IMV, Greedy Seçim
+
+________________________________________________________________________________
+
+                              İÇİNDEKİLER
+
+  1.  Projenin Amacı ve Kapsamı
+  2.  Sistem Mimarisine Genel Bakış
+  3.  IHA Sesinin Akustik Temelleri
+  4.  Özellik Çıkarma Modülü (feature_extractor.py)
+        4.1  Sinyal Ön İşleme
+        4.2  MDWT — Multi-level Discrete Wavelet Transform
+        4.3  TSK-LHP — Ternary Signum Key Local Histogram Pattern
+        4.4  Toplam Özellik Boyutu
+  5.  Model Eğitimi (train.py)
+        5.1  Veri Hazırlama ve Segmentleme
+        5.2  Özellik Seçimi
+               5.2.1  Mutual Information (MI)
+               5.2.2  Chi-Squared (χ²)
+        5.3  Sınıflandırıcılar
+               5.3.1  k-En Yakın Komşu (k-NN)
+               5.3.2  Destek Vektör Makinesi (SVM)
+        5.4  Çapraz Doğrulama (10-Katlı Stratified K-Fold)
+        5.5  IMV — Improved Majority Voting
+        5.6  Greedy Seçim Algoritması
+        5.7  Model Paketleme ve Kaydetme
+  6.  Yapılandırma Dosyası (config.py)
+  7.  Gerçek Zamanlı Sistem (realtime.py)
+        7.1  Sliding Window Mimarisi
+        7.2  Gecikme Analizi
+        7.3  Güven Skoru Mekanizması
+  8.  Tam Sistem Akış Diyagramı
+  9.  Performans Değerlendirmesi ve Test Metodolojisi
+  10. Gerçek Veri ile Çalışmak İçin Rehber
+  11. Sözlük
+
+________________________________________________________________________________
+
+
+════════════════════════════════════════════════════════════════════════════════
+  1. PROJENİN AMACI VE KAPSAMI
+════════════════════════════════════════════════════════════════════════════════
+
+Bu projenin temel amacı, hava ortamında bulunan İnsansız Hava Araçlarını
+(İHA) yalnızca ürettikleri ses sinyali üzerinden gerçek zamanlı olarak
+tanımlamaktır.
+
+Geleneksel IHA tespitinde radar, kamera veya RF (radyo frekansı) dinleme
+sistemleri kullanılır. Bu yöntemler yüksek maliyet, karmaşık altyapı veya
+doğrudan görüş hattı (Line of Sight) gerektirir. Ses tabanlı tespit ise:
+
+  • Düşük maliyetli mikrofon donanımı yeterlidir.
+  • Doğrudan görüş hattına ihtiyaç yoktur (ses engelleri aşar).
+  • Gece ve kötü görüş koşullarında çalışır.
+  • Mevcut güvenlik sistemleriyle entegre edilebilir.
+
+Kapsam:
+  ✓ Çok sınıflı IHA kimlik tespiti (ikili değil, N sınıf)
+  ✓ Gerçek zamanlı işleme (< 50 ms gecikme)
+  ✓ Gömülü sistem uyumluluğu (Jetson Nano Orin)
+  ✓ Gürültülü ortamlarda dayanıklılık (SNR ≥ 5 dB)
+
+
+════════════════════════════════════════════════════════════════════════════════
+  2. SİSTEM MİMARİSİNE GENEL BAKIŞ
+════════════════════════════════════════════════════════════════════════════════
+
+Sistem iki ana aşamadan oluşur:
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  AŞAMA A — EĞİTİM  (Bir kez yapılır, güçlü makinede)          │
+  │                                                                 │
+  │  Ses Veritabanı  →  Özellik Çıkarma  →  Özellik Seçimi        │
+  │       ↓                                        ↓               │
+  │  (MDWT + TSK-LHP)              (MI + Chi²) × 5 tur her biri   │
+  │                                                ↓               │
+  │                           kNN + SVM × 10 aday özellik seti    │
+  │                                                ↓               │
+  │                                    IMV (18 oylama seti)        │
+  │                                                ↓               │
+  │                               Greedy → En İyi Model           │
+  │                                                ↓               │
+  │                               iha_model.joblib  (kaydedilir)  │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  AŞAMA B — GERÇEK ZAMANLI  (Jetson'da sürekli çalışır)         │
+  │                                                                 │
+  │  Mikrofon → 0.5s chunk → Kayan Tampon (son 1s)                 │
+  │                                   ↓                            │
+  │                    MDWT + TSK-LHP  →  5376 boyut               │
+  │                                   ↓                            │
+  │                    FeatureTransformer  →  35 boyut             │
+  │                                   ↓                            │
+  │                    StandardScaler  →  Normalize                │
+  │                                   ↓                            │
+  │                    Classifier.predict()  →  IHA Sınıfı         │
+  │                                   ↓                            │
+  │                    Ekran / GPIO / Network çıktısı              │
+  └─────────────────────────────────────────────────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════
+  3. IHA SESİNİN AKUSTİK TEMELLERİ
+════════════════════════════════════════════════════════════════════════════════
+
+Bir IHA'nın ürettiği ses birkaç fiziksel kaynaktan oluşur:
+
+  3.1  Motor Sesi (Elektrik Motoru Harmonikleri)
+  ─────────────────────────────────────────────
+  Elektrik motorları, devir sayısına (RPM) bağlı periyodik ses üretir.
+
+    f_motor = RPM / 60   [Hz]
+
+  Bu frekansın katları (harmonikler) de sinyalde bulunur:
+    f₁ = f_motor,  f₂ = 2×f_motor,  f₃ = 3×f_motor, ...
+
+  Harmonik genlikler üstel olarak azalır:
+    A_n = A₁ × α^(n-1)    (α ≈ 0.6–0.8 tipik)
+
+  3.2  Pervane Geçiş Frekansı — BPF (Blade Pass Frequency)
+  ─────────────────────────────────────────────────────────
+  Pervanenin her kanadı mikrofon önünden geçtikçe ses basıncı artar.
+
+    BPF = N_kanat × (RPM / 60)   [Hz]
+
+  Örnek değerler:
+    DJI Mavic3   : 2 kanat × 4600/60 ≈ 153 Hz
+    DJI Air2S    : 2 kanat × 5100/60 ≈ 170 Hz   ← Mavic3'e çok yakın!
+    DJI Matrice  : 2 kanat × 3200/60 ≈ 107 Hz
+    Parrot Anafi : 2 kanat × 5500/60 ≈ 183 Hz
+    Sabit Kanat  : 2 kanat × 7000/60 ≈ 233 Hz
+
+  BPF değerleri birbirine yakın ise sınıfları ayırt etmek zorlaşır.
+  Bu proje, BPF dışındaki harmonik yapı ve zaman-frekans örüntülerini de
+  kullanarak bu zorluğun üstesinden gelmeyi hedefler.
+
+  3.3  Türbülans Gürültüsü
+  ────────────────────────
+  Pervane kanatlarının yarattığı hava türbülansı geniş bant gürültü üretir.
+  Bu bileşen IHA'ya özgü değildir ama enerji dağılımını etkiler.
+
+  3.4  Neden Frekans Alanı Yetmez?
+  ─────────────────────────────────
+  Basit FFT analizi BPF değerlerini verir ama:
+  • Birbirine yakın BPF'leri (153 Hz vs 170 Hz) ayırt edemez.
+  • Gürültü altında BPF piklerini bulmak güçleşir.
+  • Zaman içindeki değişimleri (RPM drift) yakalamaz.
+
+  Bu yüzden MDWT + TSK-LHP kombinasyonu kullanılır: dalgacık dönüşümü
+  hem zaman hem frekans bilgisini eşzamanlı temsil eder.
+
+
+════════════════════════════════════════════════════════════════════════════════
+  4. ÖZELLİK ÇIKARMA MODÜLÜ (feature_extractor.py)
+════════════════════════════════════════════════════════════════════════════════
+
+Özellik çıkarma pipeline'ı şu sırayla çalışır:
+
+    Ham ses sinyali
+         ↓
+    Sinyal ön işleme (normalize)
+         ↓
+    MDWT — 7 seviyeli dalgacık ayrıştırma
+         ↓   (her seviye için ayrı approx. katsayıları)
+    TSK-LHP — her seviyeye ayrı ayrı uygulanır
+         ↓   (her seviyeden 768 boyutlu vektör)
+    Birleştirme → 7 × 768 = 5376 boyutlu özellik vektörü
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  4.1  Sinyal Ön İşleme
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Yüklenen ses dosyası üç ön işlem adımından geçer:
+
+    a) Stereo → Mono dönüşüm:
+       İki kanallı ses varsa kanalların aritmetik ortalaması alınır.
+       audio_mono = (sol_kanal + sağ_kanal) / 2
+
+    b) Yeniden örnekleme (Resampling):
+       Farklı örnekleme frekanslarındaki dosyalar 16000 Hz'e çekilir.
+       Bu, tüm sinyallerin aynı zaman çözünürlüğünde olmasını sağlar.
+
+    c) Genlik normalizasyonu:
+       audio = audio / max(|audio|)
+       Tüm sinyaller [-1, +1] aralığına çekilir. Böylece IHA'nın mesafesinden
+       bağımsız özellikler çıkarılabilir.
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  4.2  MDWT — Multi-level Discrete Wavelet Transform
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Dalgacık dönüşümü, sinyal işlemede Fourier dönüşümünün zaman-frekans
+  sınırlamasını aşmak için geliştirilmiştir. Fourier dönüşümü bir sinyalin
+  hangi frekanslarda enerji içerdiğini söyler ama bu enerjinin zamanın hangi
+  anında oluştuğunu söyleyemez. Dalgacık dönüşümü her ikisini birden verir.
+
+  DWT (Discrete Wavelet Transform) Çalışma Prensibi:
+  ────────────────────────────────────────────────────
+  Her seviyede sinyal iki filtreye verilir:
+
+    • Alçak geçiren filtre (Low-pass)  → Approximation katsayıları (cA)
+    • Yüksek geçiren filtre (High-pass) → Detail katsayıları (cD)
+
+  Her geçişten sonra katsayı sayısı yarıya düşer (downsampling × 2).
+
+  Seviye 1:  x[n] → [cA₁, cD₁]   (her biri N/2 uzunluğunda)
+  Seviye 2:  cA₁  → [cA₂, cD₂]   (her biri N/4 uzunluğunda)
+  Seviye 3:  cA₂  → [cA₃, cD₃]   (her biri N/8 uzunluğunda)
+  ...
+  Seviye 7:  cA₆  → [cA₇, cD₇]   (her biri N/128 uzunluğunda)
+
+  Her seviyedeki approx. katsayıları farklı frekans bandını temsil eder:
+  16000 Hz örnekleme frekansı ile:
+
+    Seviye 1  approx.: 0 – 4000 Hz   (en geniş bant)
+    Seviye 2  approx.: 0 – 2000 Hz
+    Seviye 3  approx.: 0 – 1000 Hz
+    Seviye 4  approx.: 0 –  500 Hz
+    Seviye 5  approx.: 0 –  250 Hz   (BPF bölgesi)
+    Seviye 6  approx.: 0 –  125 Hz   (Motor harmonikleri)
+    Seviye 7  approx.: 0 –   62 Hz   (En düşük frekanslar)
+
+  Neden Symlet-4 (sym4) Dalgacığı?
+  ──────────────────────────────────
+  PyWavelets kütüphanesindeki 'sym4' dalgacığı kullanılır.
+  Symlet ailesi, Daubechies dalgacıklarının neredeyse simetrik versiyonudur.
+  Avantajları:
+    • Kompakt destek (hesaplama verimliliği)
+    • Neredeyse simetrik → faz bozunumu minimumdur
+    • Ses sinyali analizi için literatürde yaygın kullanım
+
+  Python Uygulaması (feature_extractor.py):
+  ──────────────────────────────────────────
+    import pywt
+    coeffs = pywt.wavedec(audio, 'sym4', level=7)
+    # coeffs[0] = cA₇ (en düşük frekans approx. katsayıları)
+    # Her seviye için ayrı wavedec çağrısı yapılır:
+    for level in range(1, 8):
+        coeffs_l = pywt.wavedec(audio, 'sym4', level=level)
+        approx   = coeffs_l[0]   # O seviyenin approx. katsayıları
+        # → TSK-LHP'ye gönderilir
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  4.3  TSK-LHP — Ternary Signum Key Local Histogram Pattern
+  ─────────────────────────────────────────────────────────────────────────────
+
+  TSK-LHP, her DWT seviyesinin approximation katsayılarına uygulanan bir
+  yerel örüntü tanımlayıcısıdır. LBP (Local Binary Pattern) yönteminden
+  esinlenerek geliştirilen bu yöntem, katsayılar arasındaki ilişkileri
+  kodlayarak sınıfa özgü imzalar oluşturur.
+
+  Adım 1 — Kayan Pencere
+  ───────────────────────
+  Sinyal (approx. katsayı dizisi), boyutu 16 olan örtüşen pencerelere bölünür.
+
+    Pencere sayısı = N - 16 + 1   (N = katsayı sayısı)
+
+  Her pencere 16 elemanlı bir alt dizidir.
+
+  Adım 2 — Pencereyi İkiye Ayırma
+  ──────────────────────────────────
+  Her 16 elemanlı pencere ikiye ayrılır:
+    • o  = pencere[0:8]    (Referans — ilk 8 eleman)
+    • d  = pencere[8:16]   (Karşılaştırma — son 8 eleman)
+
+  Her j indeksi için (j = 0, 1, ..., 7):
+    diff[j] = o[j] - d[j]
+
+  Adım 3 — Eşik Hesabı
+  ──────────────────────
+  Ternary kodlama için adaptif eşik değeri kullanılır:
+
+    τ = std(sinyal) / 2
+
+  Sinyal standardının yarısı olan bu eşik, her sinyale otomatik uyum sağlar.
+  Gürültülü sinyallerde büyük τ oluşur → küçük farklar "nötr" sayılır.
+
+  Adım 4 — Bit Hesaplama (Üç Ayrı Kodlama)
+  ──────────────────────────────────────────
+  Her j konumu için üç farklı bit hesaplanır:
+
+    ① Signum Biti (İkili Kodlama):
+         signum_bit[j] = 1   eğer diff[j] ≥ 0
+                       = 0   eğer diff[j] < 0
+
+    ② Upper Ternary Biti:
+         upper_bit[j]  = 1   eğer diff[j] > +τ   (güçlü artış)
+                       = 0   aksi halde
+
+    ③ Lower Ternary Biti:
+         lower_bit[j]  = 1   eğer diff[j] < -τ   (güçlü düşüş)
+                       = 0   aksi halde
+
+  Adım 5 — 8 Bitten Ondalık Sayıya Dönüşüm
+  ──────────────────────────────────────────
+  8 bit, LSB-önce (Least Significant Bit First) düzeniyle 0–255 arası
+  bir tam sayıya dönüştürülür:
+
+    değer = Σ (bit[j] × 2^j)   j = 0, 1, ..., 7
+
+  Her pencere için 3 ayrı ondalık değer elde edilir:
+    • signum_değer  ∈ [0, 255]
+    • upper_değer   ∈ [0, 255]
+    • lower_değer   ∈ [0, 255]
+
+  Adım 6 — Histogram Çıkarma (Normalize)
+  ──────────────────────────────────────────
+  Tüm pencerelerin değerleri toplanarak her biri için 256 bölmeli histogram
+  oluşturulur ve toplam örnek sayısına bölünerek normalize edilir:
+
+    h_signum[k] = (signum_değer == k olan pencere sayısı) / toplam
+    h_upper[k]  = (upper_değer  == k olan pencere sayısı) / toplam
+    h_lower[k]  = (lower_değer  == k olan pencere sayısı) / toplam
+
+    k = 0, 1, ..., 255
+
+  Adım 7 — Birleştirme
+  ─────────────────────
+  Üç histogram yan yana birleştirilir:
+
+    özellik_vektörü = [h_signum | h_upper | h_lower]
+                       256 boyut   256 boyut  256 boyut
+                    = 768 boyutlu vektör
+
+  Matematiksel Yorum:
+  ────────────────────
+  TSK-LHP'nin üç bileşeni farklı bilgileri kodlar:
+    • h_signum: Katsayıların genel yön dağılımı (yükselen mi, düşen mi?)
+    • h_upper : Güçlü pozitif değişim örüntüleri (ani artışlar)
+    • h_lower : Güçlü negatif değişim örüntüleri (ani düşüşler)
+
+  Bu üç histogram birlikte, o frekans bandındaki sinyalin karakteristik
+  dalgalanma örüntüsünü istatistiksel olarak betimler.
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  4.4  Toplam Özellik Boyutu
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Her DWT seviyesi için TSK-LHP uygulanır → 768 boyutlu vektör
+  7 seviye × 768 = 5376 boyutlu ham özellik vektörü
+
+  Boyutsal Özet:
+  ─────────────
+    Seviye 1 (0–4000 Hz): h_s₁ | h_u₁ | h_l₁  → 768
+    Seviye 2 (0–2000 Hz): h_s₂ | h_u₂ | h_l₂  → 768
+    Seviye 3 (0–1000 Hz): h_s₃ | h_u₃ | h_l₃  → 768
+    Seviye 4 (0– 500 Hz): h_s₄ | h_u₄ | h_l₄  → 768
+    Seviye 5 (0– 250 Hz): h_s₅ | h_u₅ | h_l₅  → 768  ← BPF bölgesi
+    Seviye 6 (0– 125 Hz): h_s₆ | h_u₆ | h_l₆  → 768  ← Motor harmonikleri
+    Seviye 7 (0–  62 Hz): h_s₇ | h_u₇ | h_l₇  → 768
+                                           TOPLAM: 5376
+
+  Hesaplama Maliyeti (örnek):
+    1 saniyelik ses × 16000 Hz = 16000 örnek
+    DWT Seviye 1 approx. uzunluğu ≈ 8000 katsayı
+    DWT Seviye 7 approx. uzunluğu ≈ 125 katsayı
+    TSK-LHP pencere sayısı (Level 1): 8000 - 16 + 1 = 7985 pencere
+    Tüm pipeline (CPU): ≈ 5–8 ms (Jetson Orin'de)
+
+
+════════════════════════════════════════════════════════════════════════════════
+  5. MODEL EĞİTİMİ (train.py)
+════════════════════════════════════════════════════════════════════════════════
+
+Eğitim pipeline'ı 6 ana adımdan oluşur ve yalnızca bir kez çalıştırılır.
+
+  ─────────────────────────────────────────────────────────────────────────────
+  5.1  Veri Hazırlama ve Segmentleme
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Veri seti şu yapıda olmalıdır:
+    dataset/
+    ├── IHA_Tipi_A/
+    │   ├── kayit_01.wav
+    │   └── kayit_02.flac
+    ├── IHA_Tipi_B/
+    └── IHA_Tipi_C/
+
+  Her alt klasör bir sınıftır. Uzun kayıt dosyaları 1 saniyelik segmentlere
+  bölünür (örtüşmesiz). 1 dakikalık kayıt → 60 segment → 60 eğitim örneği.
+
+  Her segment için extract_features() çağrılır → 5376 boyutlu vektör.
+  Sonuç: X matrisi (N_örnek × 5376) ve y etiketi vektörü (N_örnek,).
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  5.2  Özellik Seçimi
+  ─────────────────────────────────────────────────────────────────────────────
+
+  5376 boyutun tamamını sınıflandırıcıya vermek gereksizdir:
+    • Hesaplama maliyetini artırır (Jetson'da gerçek zamanlı sorun olur)
+    • Alakasız özellikler model doğruluğunu düşürür (curse of dimensionality)
+    • Küçük veri setiyle aşırı öğrenmeye (overfitting) yol açar
+
+  Çözüm: Her DWT seviyesinin 768 özelliğinden en bilgilendirici 5 tanesini seç.
+  7 seviye × 5 özellik = 35 boyutlu seçilmiş vektör.
+
+  Bu işlem 5 kez MI + 5 kez Chi² ile tekrarlanır → 10 aday özellik seti.
+
+  5.2.1  Mutual Information (MI) — Karşılıklı Bilgi
+  ──────────────────────────────────────────────────
+  Mutual Information, bir özellik ile sınıf etiketi arasındaki istatistiksel
+  bağımlılık miktarını ölçer.
+
+    MI(X_j; Y) = Σ Σ P(x_j, y) × log[ P(x_j, y) / (P(x_j) × P(y)) ]
+
+  Yorumu:
+    MI = 0  → Özellik X_j, sınıf Y hakkında hiçbir bilgi taşımıyor
+    MI > 0  → X_j'yi bilirsek Y hakkında bilgi kazanıyoruz
+
+  Uygulama:
+    Her DWT seviyesinin 768 özelliği için MI hesaplanır.
+    En yüksek MI değerine sahip 5 özellik seçilir.
+    Farklı rastgele tohumlarla 5 kez tekrarlanır (S₁ – S₅).
+
+  Neden 5 kez?
+    MI, bazı sürekli değişkenlerde Monte Carlo yaklaşımı kullanır.
+    Farklı başlangıç noktalarından 5 tur çalıştırıp çeşitlilik sağlanır.
+
+  5.2.2  Chi-Squared (χ²) — Ki-Kare İstatistiği
+  ──────────────────────────────────────────────
+  Chi-squared testi, bir özelliğin dağılımının sınıflara göre anlamlı
+  farklılık gösterip göstermediğini ölçer.
+
+    χ²_j = Σ [(gözlenen - beklenen)² / beklenen]
+
+  Histogram özellikleri zaten 0–1 arasında normalize değerler içerdiğinden
+  (non-negative), Chi-squared doğrudan uygulanabilir.
+
+  Yüksek χ² değeri → O özelliğin farklı IHA tiplerinde çok farklı dağılım
+  gösterdiği → Ayırt edici güçlü özellik.
+
+  Uygulama: Her DWT seviyesinde en yüksek χ² değerine sahip 5 özellik seçilir.
+  5 kez tekrarlanır (S₆ – S₁₀).
+
+  Özet: 10 Aday Özellik Seti
+  ───────────────────────────
+    S₁  – S₅  : 5 kez Mutual Information seçimi  (35 özellik her biri)
+    S₆  – S₁₀ : 5 kez Chi-Squared seçimi          (35 özellik her biri)
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  5.3  Sınıflandırıcılar
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Her aday özellik seti için iki farklı sınıflandırıcı denenir.
+  Bu sayede veri seti ve özellik yapısına en uygun kombinasyon bulunur.
+
+  5.3.1  k-En Yakın Komşu (k-NN)
+  ────────────────────────────────
+  k-NN, yeni bir örneği, eğitim setindeki en yakın k komşusunun çoğunluk
+  oyuna göre sınıflandırır. Öğrenme sırasında herhangi bir model kurmaz;
+  tüm hesaplama tahmin zamanında yapılır (lazy learning).
+
+  Hiperparametreler (config.py'den):
+    KNN_K      = 5        → 5 en yakın komşunun oyuna bak
+    KNN_METRIC = cityblock → Manhattan (L1) mesafesi
+
+  Manhattan (L1) Mesafesi Neden Seçildi?
+  ────────────────────────────────────────
+  Histogram özelliklerinde L1 mesafesi, L2 (Öklid)'den daha iyi performans
+  gösterir. Bunun sebebi histogramların yayılı (sparse) yapısıdır:
+  çoğu bin sıfırken birkaç bin yüksek değer taşır. L1, bu asimetrik
+  yapıyı L2'ye göre daha sağlıklı karşılaştırır.
+
+    d_L1(a, b) = Σ |a_i - b_i|    (Manhattan)
+    d_L2(a, b) = √(Σ (a_i - b_i)²) (Öklid)
+
+  Tahmin Hızı: k-NN, eğitim kümesiyle her tahminde mesafe hesaplar.
+  35 özellik × 1000 eğitim örneği ≈ 35.000 çarpma işlemi → < 1 ms.
+
+  5.3.2  Destek Vektör Makinesi (SVM — Kübik Kernel)
+  ────────────────────────────────────────────────────
+  SVM, sınıflar arasındaki en geniş marjinli karar sınırını bulmaya çalışır.
+  Doğrusal olmayan problemler için kernel trick kullanılır.
+
+  Kullanılan Kernel: Polinom (Kübik)
+    K(x, y) = (x·y + 1)³
+
+  Bu kernel, orijinal 35 boyutlu özellik uzayını örtük olarak çok daha yüksek
+  boyutlu bir uzaya taşır ve doğrusal olmayan sınıfları ayırabilir.
+
+  Hiperparametreler (config.py'den):
+    SVM_KERNEL = 'poly'   → Polinom kernel
+    SVM_DEGREE = 3        → Kübik (derece 3)
+    SVM_C      = 1.0      → Regularizasyon katsayısı (büyük C = az tolerans)
+    coef0      = 1.0      → Kernel sabit terimi
+
+  Çok Sınıflı Strateji: OvO (One-vs-One)
+  ─────────────────────────────────────────
+  N sınıf için N×(N-1)/2 adet ikili SVM modeli eğitilir.
+  Yeni örnek her ikiliden oy alır, en çok oy alan sınıf seçilir.
+  Örnek: 5 sınıf → 10 ikili model → tahmin zamanında 10 karar.
+
+  Sklearn bunu otomatik yapar (SVC varsayılan çok sınıflı strateji = OvO).
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  5.4  Çapraz Doğrulama — 10-Katlı Stratified K-Fold
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Her özellik seti – sınıflandırıcı çiftini değerlendirmek için çapraz
+  doğrulama kullanılır.
+
+  Nasıl Çalışır?
+  ───────────────
+  Veri seti 10 eşit parçaya (fold) bölünür:
+    Tur 1: Fold-1 test,   Fold-2,3,...,10 eğitim → doğruluk₁
+    Tur 2: Fold-2 test,   Fold-1,3,...,10 eğitim → doğruluk₂
+    ...
+    Tur 10: Fold-10 test, Fold-1,...,9   eğitim → doğruluk₁₀
+
+  Son doğruluk = ortalama(doğruluk₁, ..., doğruluk₁₀)
+
+  "Stratified" ne anlama gelir?
+  ───────────────────────────────
+  Her fold'da sınıf dağılımı korunur. Örneğin %30 IHA-A, %70 IHA-B ise
+  her fold da bu oranı içerir. Bu, değerlendirmenin dengesiz sınıflardan
+  etkilenmemesini sağlar.
+
+  Bu pipeline'da kaç model değerlendirilir?
+  ──────────────────────────────────────────
+    10 aday özellik seti × 2 sınıflandırıcı = 20 CV değerlendirmesi
+    Her CV = 10 model eğitimi + 10 test
+    Toplam model eğitimi: 20 × 10 = 200
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  5.5  IMV — Improved Majority Voting (Geliştirilmiş Çoğunluk Oylaması)
+  ─────────────────────────────────────────────────────────────────────────────
+
+  10 aday özellik setinden 18 ek "birleşik" özellik seti türetilir.
+  Her birleşik set, 4 farklı aday setin ortalamasından oluşur.
+
+  Amaç: Tek bir özellik setinin zayıf noktalarını, birden fazla setin
+  ortalaması alarak dengeleme.
+
+  Nasıl Çalışır?
+    • 10 aday setten rastgele 4 tanesi seçilir.
+    • Seçilen 4 setin özellik değerleri konum bazında ortalanır:
+        X_voted[i, j] = ortalama(X_s1[i,j], X_s2[i,j], X_s3[i,j], X_s4[i,j])
+    • Bu 18 kez tekrarlanır → 18 yeni aday set (v₁ – v₁₈)
+    • Her v için kNN ile CV doğruluğu hesaplanır.
+
+  Kritik Avantaj: Gerçek Zamanlı Uyumluluğu
+  ────────────────────────────────────────────
+  IMV'nin önemli bir özelliği, hangi 4 setin nasıl birleştirileceğinin
+  eğitim sırasında kaydedilmesidir. Gerçek zamanlı çıkarımda aynı işlem
+  tekrar uygulanır:
+    • Yeni ses → 5376 özellik çıkar
+    • v₁'in seçtiği 4 indeks seti → 4 × 35 boyut al → ortala → 35 boyut
+
+  Bu sayede gerçek zamanlı tahmin de birleşik özellik setini kullanır.
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  5.6  Greedy Seçim Algoritması
+  ─────────────────────────────────────────────────────────────────────────────
+
+  20 (C₁–C₁₀ × kNN/SVM) + 18 (v₁–v₁₈) = 38 aday sonuç içinden
+  en yüksek CV doğruluğuna sahip bir tanesini seç:
+
+    en_iyi = argmax(doğruluk₁, doğruluk₂, ..., doğruluk₃₈)
+
+  Bu seçim "greedy" (açgözlü) olarak adlandırılır çünkü tüm kombinasyonları
+  değerlendirmek yerine bireysel doğruluk sıralamasına bakılır.
+
+  Seçilen aday şunları belirler:
+    • Hangi özellik dönüşümü kullanılacak (transformer)
+    • Hangi sınıflandırıcı (kNN mu, SVM mi)
+    • Hangi ölçeklendirici (scaler)
+
+  Son adım: Seçilen model, TÜM eğitim verisi üzerinde yeniden eğitilir
+  (CV sırasında bazı veriler test için ayrılmıştı; şimdi hepsi kullanılır).
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  5.7  Model Paketleme ve Kaydetme
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Tüm pipeline çıktısı tek bir dosyaya sıkıştırılır: iha_model.joblib
+
+  İçeriği:
+  ─────────
+    "classifier"    → Eğitilmiş kNN veya SVM nesnesi
+    "transformer"   → Hangi 35 özelliğin seçileceği (indeks dizisi)
+    "scaler"        → StandardScaler (her özelliğin ortalama ve std'si)
+    "classes"       → ["DJI_Phantom", "Bayraktar", ...]  (sınıf isimleri)
+    "best_label"    → Hangi yöntemin kazandığı ("C3_kNN" vb.)
+    "best_accuracy" → CV doğruluğu (örn: 0.8833)
+    "sample_rate"   → 16000
+    "num_levels"    → 7
+    "wavelet"       → "sym4"
+
+  StandardScaler Nedir, Neden Gerekli?
+  ──────────────────────────────────────
+  SVM ve k-NN, özellik değerlerinin büyüklüğüne duyarlıdır. Bir özellik
+  0.001–0.01 aralığındayken diğeri 50–200 aralığındaysa, büyük değerli
+  özellik sınıflandırmaya hakim olur. StandardScaler her özelliği:
+
+    X_normalized = (X - ortalama) / standart_sapma
+
+  Bu dönüşümü uygular → tüm özellikler ~N(0,1) dağılımına çekilir.
+
+  ÖNEMLİ: Scaler, YALNIZCA eğitim verisiyle fit edilir.
+  Test ve gerçek zamanlı veride sadece transform (dönüştürme) uygulanır.
+  Eğitim verisinin istatistiklerini bilmeden normalize etmek veri sızıntısı
+  (data leakage) yaratır ve sonuçları geçersiz kılar.
+
+
+════════════════════════════════════════════════════════════════════════════════
+  6. YAPILANDIRMA DOSYASI (config.py)
+════════════════════════════════════════════════════════════════════════════════
+
+config.py, sistemdeki tüm sabit değerleri tek bir yerden yönetir.
+Herhangi bir parametreyi değiştirmek istediğinizde yalnızca bu dosyaya
+bakmanız yeterlidir; diğer modüller config'den okur.
+
+  Parametre           Varsayılan   Açıklama
+  ─────────────────── ──────────── ────────────────────────────────────────
+  SAMPLE_RATE         16000        Örnekleme frekansı (Hz).
+                                   Mikrofonunun max SR'ına eşit veya düşük
+                                   olmalı. 16 kHz IHA sesi için yeterli
+                                   (Nyquist: 8 kHz'e kadar frekans algılar).
+
+  SEGMENT_DURATION    1.0          Kaç saniyelik pencerede özellik çıkarılır.
+                                   Kısa → hızlı ama kararsız tahmin.
+                                   Uzun → yavaş ama kararlı tahmin.
+                                   1 saniye iyi bir denge noktasıdır.
+
+  HOP_DURATION        0.5          Gerçek zamanlı sistemde kaç saniyede bir
+                                   yeni tahmin yapılır. 0.5s = 2 tahmin/sn.
+
+  NUM_LEVELS          7            DWT seviyesi. Daha fazla seviye = daha
+                                   düşük frekanslara erişim = daha büyük
+                                   özellik vektörü = daha yavaş hesaplama.
+                                   Eğitimle aynı olmalı.
+
+  WAVELET             sym4         Dalgacık tipi. Eğitimle aynı olmalı.
+
+  NUM_BINS            256          Histogram çözünürlüğü. 8-bit kodlama
+                                   gereği 256 sabit. Değiştirme.
+
+  FEATURES_PER_LEVEL  5            Her DWT seviyesinden kaç özellik seçilsin.
+                                   7 seviye × 5 = 35 özellik.
+
+  KNN_K               5            k-NN için komşu sayısı.
+  KNN_METRIC          cityblock    Manhattan mesafesi.
+  SVM_KERNEL          poly         Polinom kernel.
+  SVM_DEGREE          3            Kübik.
+
+  MIC_DEVICE          None         Jetson'daki mikrofon cihaz numarası.
+                                   python realtime.py --list-devices
+                                   komutu ile öğrenilir.
+
+  CONFIDENCE_THRESHOLD 0.5         Bu değerin altında güven skoru varsa
+                                   sistem "Belirsiz" yazar.
+
+  Kritik Kural: NUM_LEVELS, WAVELET ve NUM_BINS eğitim ve gerçek zamanlı
+  sistemde HER ZAMAN aynı olmalıdır. Bu parametrelerden birini değiştirip
+  modeli yeniden eğitmeden realtime.py çalıştırırsanız tahminler
+  anlamsız sayısal çıktılar verir.
+
+
+════════════════════════════════════════════════════════════════════════════════
+  7. GERÇEK ZAMANLI SİSTEM (realtime.py)
+════════════════════════════════════════════════════════════════════════════════
+
+  ─────────────────────────────────────────────────────────────────────────────
+  7.1  Sliding Window (Kayan Pencere) Mimarisi
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Gerçek zamanlı sistem, sesi sürekli bir akış olarak değerlendirir ve
+  sabit aralıklarla (HOP_DURATION) tahmin üretir.
+
+  Zaman ekseni:
+
+    t=0s          t=0.5s        t=1s          t=1.5s        t=2s
+    │─────────────│─────────────│─────────────│─────────────│
+    ├─── Chunk 1 ─┤
+    ├─────────────┼─── Chunk 2 ─┤
+                  └─[PENCERE 1]─┘  ← 0.5s'de tahmin #1
+
+    ├─────────────├─────────────┼─── Chunk 3 ─┤
+                  └─────────────┴──[PENCERE 2]┘  ← 1.0s'de tahmin #2
+
+  Her tahmin için:
+    1. Mikrofon callback'i 0.5 saniyelik chunk üretir
+    2. Chunk, son 1 saniyelik tampona eklenir (FIFO)
+    3. Tampondaki 1 saniyelik veri → özellik çıkarımı → tahmin
+
+  Producer-Consumer Mimarisi:
+  ────────────────────────────
+  Sistem üç paralel akışta çalışır:
+
+    Thread 1 (sounddevice callback): Mikrofon verisini audio_queue'ya ekler
+    Thread 2 (processing thread)  : audio_queue'dan okur, tahmin yapar,
+                                     result_queue'ya ekler
+    Thread 3 (main thread)         : result_queue'dan okur, ekrana yazar
+
+  Bu yapı sayesinde ses kaydı, özellik hesaplama ve ekran güncellemesi
+  birbirini bloklamaz.
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  7.2  Gecikme Analizi
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Gerçek zamanlı sistemde toplam gecikme üç bileşenden oluşur:
+
+    Gecikme Kaynağı              Süre (Jetson Orin Nano, tahmini)
+    ────────────────────────     ────────────────────────────────
+    Ses tamponu dolma süresi     500 ms   (HOP_DURATION)
+    Özellik çıkarma (MDWT+TSK)   5–10 ms  (7 DWT + 7 TSK-LHP)
+    Tahmin (k-NN/SVM)             1–3 ms   (35 özellik × 1000 örnek)
+    ─────────────────────────     ────────
+    TOPLAM                       ~510 ms
+
+  Dominant gecikme, pencere boyutudur (500 ms). Bu; bir IHA tespit edildikten
+  sonra sistemin tepki vermesi için geçen gerçek süredir.
+
+  SEGMENT_DURATION = 0.5 ve HOP_DURATION = 0.25 yapılırsa:
+    Toplam gecikme → ~260 ms (daha hızlı ama daha az doğru)
+
+  Bu bir trade-off'tur: Doğruluk ↔ Gecikme
+
+  Gerçek Zamanlı Olma Koşulu:
+  ─────────────────────────────
+  Özellik çıkarma + tahmin süresi, HOP_DURATION'dan kısa olmalıdır:
+    t_işlem < t_hop
+    ~10ms < 500ms   ✓  (Jetson Orin'de rahatça sağlanır)
+
+
+  ─────────────────────────────────────────────────────────────────────────────
+  7.3  Güven Skoru Mekanizması
+  ─────────────────────────────────────────────────────────────────────────────
+
+  k-NN için güven skoru:
+    k=5 komşu kullanıldığında, komşuların sınıf dağılımı olasılık verir.
+    Örnek: 5 komşudan 4'ü "DJI_Phantom" → güven = 4/5 = 0.80
+
+  SVM için güven skoru (Platt Scaling):
+    SVM'in karar fonksiyonu bir olasılığa dönüştürülür (probability=True).
+    Bu logistik regresyon ile elde edilir (Platt 1999).
+
+  Güven eşiği (CONFIDENCE_THRESHOLD = 0.5):
+    Güven < 0.5 → Sistem "Belirsiz" yazar
+    Güven ≥ 0.5 → Sınıf adı yazılır
+
+  Pratik Not: Gerçek sahada düşük güven skorları genellikle şu durumlarda
+  oluşur: IHA geçiş noktasında (sınıflar arasında geçiş), çok gürültülü
+  ortam (SNR < 5 dB), veya eğitimde görülmemiş bir IHA tipi.
+
+
+════════════════════════════════════════════════════════════════════════════════
+  8. TAM SİSTEM AKIŞ DİYAGRAMI
+════════════════════════════════════════════════════════════════════════════════
+
+  EĞİTİM AŞAMASI:
+  ────────────────
+
+  [IHA Ses Kayıtları]
+       │ (WAV/FLAC, her IHA tipi ayrı klasörde)
+       ↓
+  [Yükleme ve Ön İşleme]
+       │ Mono dönüşüm, 16000 Hz yeniden örnekleme, normalize
+       ↓
+  [1s Segmentlere Bölme]
+       │ 1 dk kayıt → 60 segment × 5376 özellik
+       ↓
+  [MDWT — 7 Seviyeli sym4]
+       │ Her seviye → approx. katsayıları
+       │ Seviye 7 ≈ 0-62 Hz ... Seviye 1 ≈ 0-4000 Hz
+       ↓
+  [TSK-LHP — Her Seviye İçin]
+       │ 16'lık kayan pencere → signum + upper + lower bit
+       │ → 256 bölmeli normalize histogram × 3
+       │ → 768 boyutlu vektör / seviye
+       ↓
+  [5376 Boyutlu Ham Özellik Matrisi X]
+       │
+       ├── 5× Mutual Information seçimi → S₁, S₂, S₃, S₄, S₅
+       │   (her biri 35 boyut)
+       └── 5× Chi-Squared seçimi       → S₆, S₇, S₈, S₉, S₁₀
+                                          (her biri 35 boyut)
+       ↓
+  [10 Aday Özellik Seti]
+       │
+       ├── Her set için StandardScaler fit
+       ├── k-NN (k=5, cityblock) ile 10-Katlı CV → C₁–C₁₀
+       └── SVM (poly, d=3) ile 10-Katlı CV      → C₁₁–C₂₀
+       ↓
+  [IMV — 18 Oylama Seti]
+       │ 4 rastgele aday seçimi × ortalama alma × 18 → v₁–v₁₈
+       ↓
+  [38 Aday] → Greedy Seçim → En Yüksek Doğruluk
+       ↓
+  [Tüm Veri ile Son Eğitim]
+       ↓
+  [iha_model.joblib] ←── Jetson'a kopyalanır
+
+  ─────────────────────────────────────────────────────────────────────────────
+
+  GERÇEK ZAMANLI AŞAMA (Jetson Orin Nano):
+  ──────────────────────────────────────────
+
+  [Mikrofon — 16000 Hz]
+       │ 0.5 saniyelik chunk'lar
+       ↓
+  [Kayan Tampon — Son 1 Saniye]
+       │ FIFO buffer, her 0.5s'de güncellenir
+       ↓
+  [extract_features()] ← aynı pipeline
+       │ MDWT + TSK-LHP → 5376 boyut
+       │ ~5-10 ms
+       ↓
+  [transformer.transform()] ← eğitimdeki seçim
+       │ 5376 → 35 boyut
+       │ ~0.1 ms
+       ↓
+  [scaler.transform()] ← eğitimdeki istatistikler
+       │ Normalize
+       │ ~0.1 ms
+       ↓
+  [clf.predict()] ← eğitilmiş model
+       │ k-NN veya SVM tahmin
+       │ ~1-3 ms
+       ↓
+  [Güven Skoru Hesapla]
+       │ < 0.5 → "Belirsiz"
+       │ ≥ 0.5 → "DJI_Phantom (%87)"
+       ↓
+  [Çıktı: Ekran / GPIO / Network / Alarm]
+
+  Toplam işlem süresi per tahmin: ~510 ms (dominant: 500ms pencere)
+
+
+════════════════════════════════════════════════════════════════════════════════
+  9. PERFORMANS DEĞERLENDİRMESİ VE TEST METODOLOJİSİ
+════════════════════════════════════════════════════════════════════════════════
+
+  9.1  Neden %100 Sonuç Güvenilir Değildir?
+  ──────────────────────────────────────────
+  Projenin ilk versiyonunda sınıflar arasında BPF farkları çok büyüktü
+  (25 Hz – 293 Hz). Gürültü seviyesi de gerçek dışı düşüktü. Bu koşullarda
+  %100 doğruluk elde etmek, sistemin zekasından değil, problemin
+  basitliğinden kaynaklanıyordu. Basit bir FFT eşik karşılaştırması da
+  aynı sonucu verirdi.
+
+  9.2  Doğru Test Metodolojisi
+  ─────────────────────────────
+  Güvenilir test için üç kural kesinlikle uygulanmalıdır:
+
+    Kural 1 — Veri Sızıntısı (Data Leakage) Yokluğu:
+      Eğitim seti ve test seti hiçbir ses dosyasını paylaşmamalıdır.
+      Aynı kaydı segmentlere bölüp bir kısmını eğitime, kalan kısmını
+      teste vermek yanlıştır. Aynı IHA'nın farklı günlerdeki farklı
+      kayıtları kullanılmalıdır.
+
+    Kural 2 — Gerçekçi Gürültü Koşulları:
+      Test verisi, eğitim verisinden farklı gürültü örneklerine sahip
+      olmalıdır. Gerçek sahadaki SNR 5–20 dB arasında değişir.
+
+    Kural 3 — Akustik Zorluk:
+      Test edilen IHA tipleri, akustik olarak birbirine yakın olmalıdır.
+      Helikopter vs. küçük quadrotor ayrımı trivialdir; iki benzer
+      quadrotor'u ayırt etmek gerçek başarı ölçütüdür.
+
+  9.3  Kullanılan Metrikler
+  ──────────────────────────
+    Doğruluk (Accuracy):
+      Doğru tahmin sayısı / Toplam tahmin sayısı
+      Dengeli veri setinde temel metrik.
+
+    Kesinlik (Precision) — Sınıf bazında:
+      TP / (TP + FP)
+      "DJI_Phantom" dediğimde ne kadar haklıyım?
+
+    Duyarlılık (Recall) — Sınıf bazında:
+      TP / (TP + FN)
+      Gerçek DJI_Phantom'ların kaçını yakalayabildim?
+
+    F1 Skoru:
+      2 × (Kesinlik × Duyarlılık) / (Kesinlik + Duyarlılık)
+      Kesinlik ve duyarlılığın harmonik ortalaması.
+
+    SNR Stres Testi:
+      20 dB → 10 dB → 5 dB → 0 dB aralığında ayrı test setleriyle
+      modelin gürültüye dayanıklılığı ölçülür.
+
+  9.4  Mevcut Test Sonuçları (Sentetik Veri)
+  ────────────────────────────────────────────
+  Bağımsız test verisi (farklı tohum, SNR=5–20 dB, BPF=107–233 Hz):
+
+    Genel Doğruluk    : %84.89
+    F1 Skoru          : %84.76
+    Gecikme           : 0.024 ms/örnek
+
+    Sınıf Bazında Sonuçlar:
+      Sabit_Kanat  : %100  (tek motor, farklı harmonik yapısı)
+      DJI_Matrice  : %99   (6 motor, düşük BPF, belirgin)
+      DJI_Mavic3   : %83   (Air2S ile karışıyor: BPF farkı 17 Hz)
+      Parrot_Anafi : %79   (Air2S ile karışıyor: BPF farkı 13 Hz)
+      DJI_Air2S    : %63   (en zor sınıf: hem Mavic3 hem Anafi'ye yakın)
+
+    SNR Analizi:
+      SNR=20 dB → %82.7
+      SNR=10 dB → %82.0
+      SNR= 5 dB → %76.0
+      SNR= 0 dB → %86.7   (stokastik etki)
+
+  Not: %84.89 sonucu, sentetik ama gerçekçi koşullarda geçerlidir.
+  Gerçek IHA kayıtlarıyla bu oran değişecektir. Gerçek veri genellikle
+  daha karmaşıktır (çevresel yansıma, mikrofon karakteristiği, rüzgar).
+  Gerçek veriyle %70–85 arası bir doğruluk başarı sayılır.
+
+
+════════════════════════════════════════════════════════════════════════════════
+  10. GERÇEK VERİ İLE ÇALIŞMAK İÇİN REHBER
+════════════════════════════════════════════════════════════════════════════════
+
+  Adım 1 — Ses Kayıt Planı
+  ──────────────────────────
+    • Her IHA tipi için en az 10 dakika kayıt yapın.
+    • Farklı mesafelerden kayıt alın: 10m, 20m, 50m, 100m.
+    • Farklı ortamlarda kayıt alın: açık alan, bina yakını, rüzgarlı.
+    • Gerçek zamanlı sistemde kullanacağınız mikrofonla kayıt yapın.
+      (Farklı mikrofon karakteristiği farklı sonuç verir.)
+    • Arka plan gürültüsü kayıtları da alın (IHA yokken). Bu, eğitim
+      setinde "Bilinmiyor/Arka Plan" sınıfı oluşturmanıza yardımcı olur.
+
+  Adım 2 — Veri Temizleme
+  ────────────────────────
+    • Çok gürültülü (konuşma vb.) bölümleri kesin.
+    • İHA sesi açıkça duyulan bölümleri işaretleyin.
+    • Her kayıtı isimlendirilmiş klasöre taşıyın:
+        dataset/DJI_Phantom/    (30+ dakika kayıt)
+        dataset/Bayraktar_TB2/  (30+ dakika kayıt)
+        ...
+
+  Adım 3 — Eğitim
+  ─────────────────
+    cd iha_sistemi/
+    python train.py --dataset /path/to/dataset
+
+    Beklenen eğitim süresi: 5–30 dakika (veri miktarına bağlı)
+
+  Adım 4 — Test (test/ klasöründe ayrı veri ile)
+  ─────────────────────────────────────────────────
+    Eğitim verisinden AYRI günlerde alınan kayıtları test için kullanın.
+    test/dataset_test/ klasörüne koyun ve run_test.py ile değerlendirin.
+
+  Adım 5 — Jetson'a Taşıma
+  ──────────────────────────
+    Kopyalanacaklar (sadece bunlar):
+      iha_sistemi/config.py
+      iha_sistemi/feature_extractor.py
+      iha_sistemi/realtime.py
+      iha_sistemi/requirements.txt
+      iha_sistemi/models/iha_model.joblib  ← eğitilmiş model
+
+    Kopyalanmayacaklar (Jetson'da gerek yok):
+      train.py, dataset/, excel_ciktilari/
+
+  Adım 6 — Jetson'da Çalıştırma
+  ────────────────────────────────
+    # Bağımlılıkları yükle
+    pip install -r requirements.txt
+
+    # Mikrofon numarasını öğren
+    python realtime.py --list-devices
+
+    # Çalıştır (örn. mikrofon cihaz 2)
+    python realtime.py --device 2
+
+  Adım 7 — Sonucu İyileştirme
+  ─────────────────────────────
+  Eğer doğruluk yetersizse:
+    • Daha fazla çeşitlilikte kayıt ekleyin (mesafe, ortam, yön).
+    • FEATURES_PER_LEVEL değerini artırın (5 → 10).
+    • SEGMENT_DURATION değerini artırın (1.0 → 2.0).
+    • Karışan iki sınıf için daha fazla veri toplayın (karmaşıklık
+      matrisinde hangi ikili karıştığını görürsünüz).
+
+
+════════════════════════════════════════════════════════════════════════════════
+  11. SÖZLÜK
+════════════════════════════════════════════════════════════════════════════════
+
+  BPF (Blade Pass Frequency): Pervane kanatlarının ses baskı değişim frekansı.
+    BPF = kanat_sayısı × (RPM / 60)
+
+  Chi-Squared (χ²): Gözlenen ve beklenen dağılımlar arasındaki farkı ölçen
+    istatistiksel test. Özellik seçiminde kullanılır.
+
+  Cross-Validation (Çapraz Doğrulama): Modelin farklı veri alt kümelerinde
+    test edilerek genelleme başarısının ölçülmesi.
+
+  Data Leakage (Veri Sızıntısı): Eğitim verisinin test sürecini etkilemesi.
+    Yapay olarak yüksek doğruluk sonuçları verir; önlenmelidir.
+
+  DWT (Discrete Wavelet Transform): Sinyali farklı frekans bandlarına ayıran
+    matematiksel dönüşüm. Hem zaman hem frekans bilgisini korur.
+
+  Greedy Algoritma: Yerel olarak en iyi seçimi yapan ve geri dönmeyen
+    optimizasyon yaklaşımı.
+
+  Histogram: Veri değerlerinin belirli aralıklara (bin) düşme sıklığını
+    gösteren istatistiksel dağılım gösterimi.
+
+  Hop Duration: Gerçek zamanlı sistemde iki ardışık tahmin arasındaki zaman.
+
+  IMV (Improved Majority Voting): Birden fazla özellik setinin ortalamasını
+    alarak tek bir özellik seti oluşturma yöntemi.
+
+  k-NN (k-Nearest Neighbors): Yeni örneği, en yakın k eğitim örneğinin
+    çoğunluk sınıfına atayan sınıflandırıcı.
+
+  LBP (Local Binary Pattern): Görüntü işlemede yerel yapı kodlama yöntemi.
+    TSK-LHP'nin ilham kaynağıdır.
+
+  Manhattan (L1) Mesafesi: İki nokta arasındaki koordinat farkları toplamı.
+    d = Σ|a_i - b_i|
+
+  MDWT (Multi-level DWT): Dalgacık dönüşümünün ardışık seviyelerde
+    uygulanması.
+
+  Mutual Information (MI): İki değişken arasındaki istatistiksel bağımlılık
+    miktarı. Bilgi teorik önem ölçütü.
+
+  Normalizasyon: Veri değerlerini belirli bir aralığa çekme işlemi.
+
+  OvO (One-vs-One): Çok sınıflı SVM stratejisi. N sınıf için N(N-1)/2
+    ikili model eğitilir.
+
+  SNR (Signal-to-Noise Ratio): Sinyal gücünün gürültü gücüne oranı (dB).
+    Yüksek SNR = temiz sinyal.
+
+  StandardScaler: Özellik değerlerini sıfır ortalama ve birim varyanslı
+    dağılıma çeken ön işleme adımı.
+
+  SVM (Support Vector Machine): Sınıflar arasındaki en geniş marjini
+    maksimize eden sınıflandırıcı.
+
+  Symlet (sym4): Daubechies dalgacıklarının neredeyse simetrik versiyonu.
+    Ses işleme uygulamalarında yaygın.
+
+  TSK-LHP (Ternary Signum Key Local Histogram Pattern): Bu projede
+    kullanılan ses özellik çıkarma yöntemi. Yerel katsayı ilişkilerini
+    üçlü kodlama ile histogram haline getirir.
+
+________________________________________________________________________________
+
+                        BELGE SONU
+  IHA Ses Tabanlı Sınıflandırma Sistemi — Teknik Dokümantasyon
+________________________________________________________________________________

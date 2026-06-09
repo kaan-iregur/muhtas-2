@@ -1,0 +1,9 @@
+ARŞİV — Sarsilmaz v2 (GroupKFold, 3s Örtüşen Segment)
+=======================================================
+NEDEN ÇALIŞMADI:
+  - GroupKFold (kaynak dosya bazlı): bir fold'da tüm dosyaları
+    test'e alınca bazı sınıflar eğitimden tamamen çıkıyor
+  - ÖRÜMCEK (tek dosya), DİNOZOR (az dosya) → fold'da %0
+  - Katlı doğruluklar: %0, %7.1, %28.4, %39.6, %33.0
+  - Genel sonuç: %17.85 (yanıltıcı biçimde düşük)
+SONUÇ: v3 temporal split ile değiştirildi.

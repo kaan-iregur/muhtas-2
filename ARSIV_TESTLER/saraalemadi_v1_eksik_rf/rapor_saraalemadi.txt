@@ -1,0 +1,63 @@
+
+╔══════════════════════════════════════════════════════════════════╗
+║  saraalemadi DroneAudioDataset — MDWT+TSK-LHP Pipeline Testi   ║
+║  Türker Tuncer (2023) ile Kıyaslama                             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+VERİ SETİ
+──────────────────────────────────────────────────────────────────
+  Kaynak : github.com/saraalemadi/DroneAudioDataset (CC BY 4.0)
+  Sınıflar: bebop_1, membo_1, unknown
+  Toplam segment: 2030
+    bebop_1     : 665 segment
+    membo_1     : 665 segment
+    unknown     : 700 segment
+  Segment süresi : 1.0s  |  Örnekleme : 16000 Hz
+  Ham özellik    : 5376 boyut (7 seviye × 768)
+  Seçilen özellik: 35 boyut (MI)
+
+10-FOLD CROSS-VALIDATION — EN İYİ 5 KOMBİNASYON
+──────────────────────────────────────────────────────────────────
+  Yöntem                  CV Doğruluk
+  ────────────────────────────────────────
+  MI-1+SVM                88.03%
+  Chi2-1+SVM              87.78%
+  Chi2-2+SVM              87.78%
+  Chi2-3+SVM              87.78%
+  Chi2-4+SVM              87.78%
+
+  En iyi: MI-1+SVM  →  88.03%
+
+SINIFLANDIRMA RAPORU (kNN, 10-Fold CV)
+──────────────────────────────────────────────────────────────────
+              precision    recall  f1-score   support
+
+     bebop_1       0.83      0.91      0.87       665
+     membo_1       0.87      0.79      0.83       665
+     unknown       0.90      0.89      0.90       700
+
+    accuracy                           0.86      2030
+   macro avg       0.86      0.86      0.86      2030
+weighted avg       0.87      0.86      0.86      2030
+
+
+%80/%20 TRAIN/TEST SPLIT (en iyi özellik seti ile)
+──────────────────────────────────────────────────────────────────
+  Model     Doğruluk    F1 (ağırlıklı)
+  ────────────────────────────────────────
+  kNN       86.95%      86.96%
+  SVM       89.16%      89.18%
+
+TÜRKER TUNCER (2023) KARŞILAŞTIRMASI
+──────────────────────────────────────────────────────────────────
+  Türker (Skinny+TQWT+INCA, YouTube verisi, 7 sınıf):
+    10-Fold CV → %99.72  |  F1 → %99.61  |  Temporal: ÖLÇÜLMEDI
+
+  Bu pipeline (MDWT+TSK-LHP, saraalemadi verisi, 3 sınıf):
+    10-Fold CV → 88.03%  |  %80/%20 split → 89.16%
+
+  NOT: Türker'in dataset'i artık erişilebilir değil (404). Bu test
+  bağımsız bir drone ses verisi üzerinde pipeline'ın doğrulandığını gösterir.
+
+TOPLAM SÜRE: 1.9 dakika
+Tarih: 2026-05-19 19:05:40

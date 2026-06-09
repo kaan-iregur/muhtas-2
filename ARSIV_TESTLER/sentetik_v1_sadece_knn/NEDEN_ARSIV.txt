@@ -1,0 +1,6 @@
+ARŞİV — Sentetik v1 (sadece kNN, SVM/RF eksik)
+================================================
+NEDEN GÜNCELLENDİ:
+  - Sadece kNN test edilmişti
+  - Karşılaştırmalı tablo (kNN/SVM/RF) yoktu
+GÜNCEL SONUÇ: GUNCEL_TESTLER/01_sentetik_5sinif/sonuclar/rapor.txt

@@ -1,0 +1,7 @@
+ARŞİV — Saraalemadi v1 (RF eksik, dengesiz sınıf)
+===================================================
+NEDEN GÜNCELLENDİ:
+  - Sadece kNN ve SVM test edilmişti, RF yoktu
+  - unknown sınıfı dengesizdi (700 vs 665 vs 665)
+  - Sonuçlar güncel unifiye_test.py ile tutarsız
+GÜNCEL SONUÇ: GUNCEL_TESTLER/03_saraalemadi_3sinif/sonuclar/rapor.txt

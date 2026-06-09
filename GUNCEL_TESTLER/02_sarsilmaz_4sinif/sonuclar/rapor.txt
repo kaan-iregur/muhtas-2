@@ -1,0 +1,74 @@
+╔══════════════════════════════════════════════════════════════════╗
+║  SARSİLMAZ GERÇEK VERİ — 4 Sınıf İHA Ses Tanıma                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  Veri tipi                : Gerçek Sarsilmaz saha kaydı
+  Sınıf sayısı             : 4
+  Sınıflar                 : BÜRKÜT, DİNOZOR, HEXA, ÖRÜMCEK
+  Train segment            : 4890
+  Test segment             : 370
+  Segment süresi           : 3.0s (augmentasyon uygulandı)
+  Örnekleme                : 16000 Hz (48kHz'den resample)
+  Ham özellik              : 5376 (7×768)
+  Seçilen özellik          : 35
+  Split türü               : TEMPORAL (ilk %70 eğitim / son %30 test)
+
+10-FOLD STRATIFIED CV
+────────────────────────────────────────────────────────────────────
+  Model       Doğruluk     ± Std    F1 (ağır.)
+  ────────  ──────────  ────────  ────────────
+  kNN           94.03%     0.71%        94.02%
+  SVM           80.04%     1.02%        78.93%
+  RF            93.71%     0.70%        93.69%
+
+  En iyi CV: kNN → %94.03
+
+  Sınıflandırma Raporu (kNN, 10-fold pred birleştirme):
+              precision    recall  f1-score   support
+
+      BÜRKÜT      0.963     0.982     0.972      1440
+     DİNOZOR      0.960     0.922     0.940       574
+        HEXA      0.937     0.936     0.937      1931
+     ÖRÜMCEK      0.912     0.910     0.911      1315
+
+    accuracy                          0.940      5260
+   macro avg      0.943     0.937     0.940      5260
+weighted avg      0.940     0.940     0.940      5260
+
+  Karmaşıklık Matrisi:
+      BÜRKÜT     DİNOZOR        HEXA     ÖRÜMCEK
+    BÜRKÜT        1414          21           5           0
+   DİNOZOR          45         529           0           0
+      HEXA           7           1        1807         116
+   ÖRÜMCEK           3           0         116        1196
+
+BAĞIMSIZ SPLIT (Temporal Split (kronolojik))
+────────────────────────────────────────────────────────────────────
+  Model       Doğruluk    F1 (ağır.)
+  ────────  ──────────  ────────────
+  kNN           70.00%        70.65%
+  SVM           67.84%        68.81%
+  RF            68.38%        68.95%
+
+  En iyi Split: kNN → %70.00
+
+  Sınıflandırma Raporu (kNN):
+              precision    recall  f1-score   support
+
+      BÜRKÜT      0.578     0.867     0.693        60
+     DİNOZOR      0.952     0.799     0.869       174
+        HEXA      0.577     0.556     0.566        81
+     ÖRÜMCEK      0.411     0.418     0.414        55
+
+    accuracy                          0.700       370
+   macro avg      0.629     0.660     0.636       370
+weighted avg      0.729     0.700     0.706       370
+
+  Karmaşıklık Matrisi:
+      BÜRKÜT     DİNOZOR        HEXA     ÖRÜMCEK
+    BÜRKÜT          52           7           1           0
+   DİNOZOR          35         139           0           0
+      HEXA           3           0          45          33
+   ÖRÜMCEK           0           0          32          23
+
+Tarih: 2026-05-19 22:55:42

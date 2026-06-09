@@ -1,0 +1,78 @@
+╔══════════════════════════════════════════════════════════════════╗
+║  SENTETİK VERİ — 5 Sınıf İHA Ses Tanıma                          ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  Veri tipi                : Sentetik (sinüzoidal İHA ses modeli)
+  Sınıf sayısı             : 5
+  Sınıflar                 : DJI_Air2S, DJI_Matrice, DJI_Mavic3, Parrot_Anafi, Sabit_Kanat
+  Train segment            : 300
+  Test segment             : 300
+  Segment süresi           : 3.0s
+  Örnekleme                : 16000 Hz
+  Ham özellik              : 5376 (7×768)
+  Seçilen özellik          : 35
+  Split türü               : BAĞIMSIZ SEED (train/test farklı rastgele tohum)
+
+10-FOLD STRATIFIED CV
+────────────────────────────────────────────────────────────────────
+  Model       Doğruluk     ± Std    F1 (ağır.)
+  ────────  ──────────  ────────  ────────────
+  kNN           87.33%     4.67%        87.13%
+  SVM           89.00%     4.96%        89.01%
+  RF            87.00%     3.79%        86.75%
+
+  En iyi CV: SVM → %89.00
+
+  Sınıflandırma Raporu (SVM, 10-fold pred birleştirme):
+              precision    recall  f1-score   support
+
+   DJI_Air2S      0.708     0.767     0.736        60
+ DJI_Matrice      1.000     1.000     1.000        60
+  DJI_Mavic3      0.929     0.867     0.897        60
+Parrot_Anafi      0.831     0.817     0.824        60
+ Sabit_Kanat      1.000     1.000     1.000        60
+
+    accuracy                          0.890       300
+   macro avg      0.893     0.890     0.891       300
+weighted avg      0.893     0.890     0.891       300
+
+  Karmaşıklık Matrisi:
+   DJI_Air2S  DJI_Matrice  DJI_Mavic3  Parrot_Anafi  Sabit_Kanat
+ DJI_Air2S          46           0           4          10           0
+DJI_Matrice           0          60           0           0           0
+DJI_Mavic3           8           0          52           0           0
+Parrot_Anafi          11           0           0          49           0
+Sabit_Kanat           0           0           0           0          60
+
+BAĞIMSIZ SPLIT (Bağımsız Seed (en dürüst yöntem))
+────────────────────────────────────────────────────────────────────
+  Model       Doğruluk    F1 (ağır.)
+  ────────  ──────────  ────────────
+  kNN           86.00%        85.63%
+  SVM           87.33%        86.93%
+  RF            89.00%        88.58%
+
+  En iyi Split: RF → %89.00
+
+  Sınıflandırma Raporu (RF):
+              precision    recall  f1-score   support
+
+   DJI_Air2S      0.804     0.617     0.698        60
+ DJI_Matrice      0.984     1.000     0.992        60
+  DJI_Mavic3      0.831     0.900     0.864        60
+Parrot_Anafi      0.824     0.933     0.875        60
+ Sabit_Kanat      1.000     1.000     1.000        60
+
+    accuracy                          0.890       300
+   macro avg      0.888     0.890     0.886       300
+weighted avg      0.888     0.890     0.886       300
+
+  Karmaşıklık Matrisi:
+   DJI_Air2S  DJI_Matrice  DJI_Mavic3  Parrot_Anafi  Sabit_Kanat
+ DJI_Air2S          37           0          11          12           0
+DJI_Matrice           0          60           0           0           0
+DJI_Mavic3           6           0          54           0           0
+Parrot_Anafi           3           1           0          56           0
+Sabit_Kanat           0           0           0           0          60
+
+Tarih: 2026-05-19 22:51:12

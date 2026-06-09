@@ -1,0 +1,25 @@
+{
+  "sample_rate": 16000,
+  "blocks": [
+    {
+      "class": "BÜRKÜT",
+      "start_s": 0.0,
+      "end_s": 30.0
+    },
+    {
+      "class": "DİNOZOR",
+      "start_s": 32.0,
+      "end_s": 62.0
+    },
+    {
+      "class": "HEXA",
+      "start_s": 64.0,
+      "end_s": 94.0
+    },
+    {
+      "class": "ÖRÜMCEK",
+      "start_s": 96.0,
+      "end_s": 126.0
+    }
+  ]
+}

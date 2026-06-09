@@ -1,0 +1,4 @@
+Bu klasör, run_test_v3.py'nin ürettiği orijinal v3 sonuçlarıdır.
+Özellik seçimi: K_FEAT=12 (her seviyeden 12 özellik = toplam 84)
+Güncel testte K_FEAT=5 kullanılıyor (35 özellik).
+Karşılaştırma için referans olarak saklandı.

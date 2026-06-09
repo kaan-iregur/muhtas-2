@@ -1,0 +1,8 @@
+ARŞİV — Sarsilmaz v1 (Dosya Bazlı LOOCV, 1s Segment)
+======================================================
+NEDEN ÇALIŞMADI:
+  - 1s segment → kısa pencere, yetersiz frekans çözünürlüğü
+  - LOOCV: tek dosyası olan ÖRÜMCEK sınıfı test'e düştüğünde
+    eğitim setinde hiç ÖRÜMCEK kalmıyor → %0 tahmin
+  - Sonuç: Genel doğruluk %47.69 (anlamsız)
+SONUÇ: v3 temporal split ile değiştirildi.

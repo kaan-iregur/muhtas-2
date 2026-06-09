@@ -1,0 +1,27 @@
+# Veri setleri ve ham sesler (rsync ile aktarılacak)
+test-2/dataset_sarsilmaz/
+SARSILMAZ İHA SESLER/
+
+# Cache dosyaları
+*.npz
+__pycache__/
+*.pyc
+*.pyo
+
+# Model dosyaları (büyük olanlar) — küçük .joblib'ler dahil edildi
+# eğer sorun çıkarsa eklenebilir: *.joblib
+
+# PDF, Word, Excel dokümanlar
+*.pdf
+*.docx
+*.xlsx
+
+# Demo ses dosyası (4MB)
+realtime/demo_audio.wav
+
+# IDE
+.vscode/
+.idea/
+
+# Claude dahili
+.claude/

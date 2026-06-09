@@ -1,0 +1,69 @@
+╔══════════════════════════════════════════════════════════════════╗
+║  SARAAlEMADİ PUBLIC VERİ — 3 Sınıf Drone Ses Tanıma              ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  Veri tipi                : Public drone ses (github.com/saraalemadi/DroneAudioDataset)
+  Sınıf sayısı             : 3
+  Sınıflar                 : bebop_1, membo_1, unknown
+  Toplam segment           : 1509
+  Segment süresi           : 1.0s
+  Örnekleme                : 16000 Hz (native)
+  Ham özellik              : 5376 (7×768)
+  Seçilen özellik          : 35
+  Split türü               : RANDOM %80/%20 Stratified
+
+10-FOLD STRATIFIED CV
+────────────────────────────────────────────────────────────────────
+  Model       Doğruluk     ± Std    F1 (ağır.)
+  ────────  ──────────  ────────  ────────────
+  kNN           85.55%     3.33%        85.41%
+  SVM           85.95%     2.31%        85.83%
+  RF            86.61%     2.90%        86.55%
+
+  En iyi CV: RF → %86.61
+
+  Sınıflandırma Raporu (RF, 10-fold pred birleştirme):
+              precision    recall  f1-score   support
+
+     bebop_1      0.845     0.915     0.878       541
+     membo_1      0.874     0.814     0.843       547
+     unknown      0.886     0.872     0.879       421
+
+    accuracy                          0.866      1509
+   macro avg      0.868     0.867     0.867      1509
+weighted avg      0.867     0.866     0.866      1509
+
+  Karmaşıklık Matrisi:
+     bebop_1     membo_1     unknown
+   bebop_1         495          36          10
+   membo_1          65         445          37
+   unknown          26          28         367
+
+BAĞIMSIZ SPLIT (%80/%20 Stratified Random)
+────────────────────────────────────────────────────────────────────
+  Model       Doğruluk    F1 (ağır.)
+  ────────  ──────────  ────────────
+  kNN           84.44%        84.24%
+  SVM           85.43%        85.32%
+  RF            87.42%        87.40%
+
+  En iyi Split: RF → %87.42
+
+  Sınıflandırma Raporu (RF):
+              precision    recall  f1-score   support
+
+     bebop_1      0.831     0.907     0.867       108
+     membo_1      0.891     0.818     0.853       110
+     unknown      0.916     0.905     0.910        84
+
+    accuracy                          0.874       302
+   macro avg      0.879     0.877     0.877       302
+weighted avg      0.876     0.874     0.874       302
+
+  Karmaşıklık Matrisi:
+     bebop_1     membo_1     unknown
+   bebop_1          98           9           1
+   membo_1          14          90           6
+   unknown           6           2          76
+
+Tarih: 2026-05-19 23:01:15

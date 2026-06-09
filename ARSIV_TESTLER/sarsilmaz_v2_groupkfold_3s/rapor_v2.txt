@@ -1,0 +1,84 @@
+╔══════════════════════════════════════════════════════════╗
+║  SARSILMAZ İHA SESLER v2 — TSK-LHP/MDWT TEST RAPORU     ║
+╚══════════════════════════════════════════════════════════╝
+
+YÖNTEM İYİLEŞTİRMELERİ (v1 → v2)
+───────────────────────────────────────────────────────
+  ✓ 1s  → 3s segment (L7'de 131 → 381 approx katsayı)
+  ✓ Örtüşen segmentasyon (1s kayma, 3x fazla veri)
+  ✓ Veri augmentasyonu (pitch shift, speed, gain)
+  ✓ GroupKFold CV (kaynak dosya bazlı, data leakage yok)
+  ✓ MI + Chi2 özellik seçimi
+  ✓ RF sınıflandırıcı eklendi
+
+VERİ SETİ
+───────────────────────────────────────────────────────
+  Sınıflar      : BÜRKÜT, DİNOZOR, HEXA, ÖRÜMCEK
+  Toplam segment: 7,024
+    BÜRKÜT        : 1,980 segment
+    DİNOZOR       :   574 segment
+    HEXA          : 2,660 segment
+    ÖRÜMCEK       : 1,810 segment
+
+EN İYİ KOMBİNASYON
+───────────────────────────────────────────────────────
+  Chi2-1+SVM
+
+SONUÇLAR
+───────────────────────────────────────────────────────
+  GroupKFold Doğruluk : %17.85
+  Kesinlik            : %20.19 (ağırlıklı)
+  Duyarlılık          : %17.85 (ağırlıklı)
+  F1 Skoru            : %18.91 (ağırlıklı)
+
+  Katlı doğruluklar: ['0.0%', '7.1%', '28.4%', '39.6%', '33.0%']
+
+SINIFLANDIRMA RAPORU
+───────────────────────────────────────────────────────
+              precision    recall  f1-score   support
+
+      BÜRKÜT      0.470     0.387     0.425      1980
+     DİNOZOR      0.000     0.000     0.000       574
+        HEXA      0.183     0.183     0.183      2660
+     ÖRÜMCEK      0.000     0.000     0.000      1810
+
+    accuracy                          0.179      7024
+   macro avg      0.163     0.143     0.152      7024
+weighted avg      0.202     0.179     0.189      7024
+
+
+TÜM KOMBİNASYON SONUÇLARI
+───────────────────────────────────────────────────────
+  Chi2-1+SVM                  21.86% ± 15.39%
+  Chi2-2+SVM                  21.86% ± 15.39%
+  Chi2-3+SVM                  21.86% ± 15.39%
+  Chi2-4+SVM                  21.86% ± 15.39%
+  Chi2-5+SVM                  21.86% ± 15.39%
+  MI-5+SVM                    20.39% ± 13.61%
+  MI-2+SVM                    19.98% ± 13.78%
+  MI-3+SVM                    19.92% ± 13.60%
+  MI-1+SVM                    19.53% ± 13.72%
+  MI-4+SVM                    19.26% ± 13.09%
+  Chi2-1+kNN                  18.59% ± 14.83%
+  Chi2-2+kNN                  18.59% ± 14.83%
+  Chi2-3+kNN                  18.59% ± 14.83%
+  Chi2-4+kNN                  18.59% ± 14.83%
+  Chi2-5+kNN                  18.59% ± 14.83%
+  MI-3+kNN                    18.46% ± 14.07%
+  MI-1+kNN                    17.91% ± 13.94%
+  MI-4+kNN                    17.77% ± 13.79%
+  Chi2-1+RF                   17.59% ± 14.06%
+  Chi2-2+RF                   17.59% ± 14.06%
+  Chi2-3+RF                   17.59% ± 14.06%
+  Chi2-4+RF                   17.59% ± 14.06%
+  Chi2-5+RF                   17.59% ± 14.06%
+  MI-2+kNN                    17.58% ± 13.40%
+  MI-5+kNN                    17.31% ± 13.57%
+  MI-3+RF                     16.98% ± 14.02%
+  MI-5+RF                     16.84% ± 13.83%
+  MI-1+RF                     16.71% ± 13.79%
+  MI-4+RF                     16.65% ± 13.69%
+  MI-2+RF                     16.19% ± 13.27%
+
+
+Tarih: 2026-03-12 12:19:50

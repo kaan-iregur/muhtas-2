@@ -1,0 +1,79 @@
+╔══════════════════════════════════════════════════════════╗
+║  SARSILMAZ İHA SESLER v3 — TEMPORAL SPLIT RAPORU        ║
+╚══════════════════════════════════════════════════════════╝
+
+TEST STRATEJİSİ
+───────────────────────────────────────────────────────
+  Segment süresi: 3.0s  (v1: 1s)
+  Split oranı   : İlk %70 eğitim, son %30 test
+  Augmentasyon  : Sadece eğitim setinde
+  Test seti     : Orijinal, augment görmemiş
+
+VERİ SETİ
+───────────────────────────────────────────────────────
+  BÜRKÜT        : eğitim=1,380  test=  60
+  DİNOZOR       : eğitim=  400  test= 174
+  HEXA          : eğitim=1,850  test=  81
+  ÖRÜMCEK       : eğitim=1,260  test=  55
+
+EN İYİ KOMBİNASYON: MI-1+SVM
+
+TEMPORAL SPLIT SONUÇLARI
+───────────────────────────────────────────────────────
+  Doğruluk  : %72.43
+  Kesinlik  : %74.76
+  Duyarlılık: %72.43
+  F1 Skoru  : %73.03
+
+              precision    recall  f1-score   support
+
+      BÜRKÜT      0.630     0.850     0.723        60
+     DİNOZOR      0.941     0.828     0.881       174
+        HEXA      0.629     0.543     0.583        81
+     ÖRÜMCEK      0.439     0.527     0.479        55
+
+    accuracy                          0.724       370
+   macro avg      0.660     0.687     0.667       370
+weighted avg      0.748     0.724     0.730       370
+
+10-KATLI CV (MATLAB EŞDEĞERİ)
+───────────────────────────────────────────────────────
+  kNN     : %96.83 ± %0.87
+  SVM     : %92.31 ± %1.19
+  RF      : %96.63 ± %0.76
+
+TÜM KOMBİNASYONLAR (test accuracy sıralı)
+───────────────────────────────────────────────────────
+  MI-1+SVM                  72.43%  F1=73.03%
+  MI-2+kNN                  71.62%  F1=72.20%
+  MI-5+kNN                  71.35%  F1=71.67%
+  MI-1+kNN                  70.81%  F1=71.34%
+  MI-5+SVM                  70.81%  F1=71.26%
+  MI-4+SVM                  70.27%  F1=70.88%
+  MI-2+SVM                  70.00%  F1=70.52%
+  MI-1+RF                   69.73%  F1=68.48%
+  MI-4+kNN                  69.73%  F1=70.56%
+  MI-3+kNN                  69.19%  F1=70.09%
+  MI-5+RF                   68.11%  F1=68.00%
+  MI-3+SVM                  67.57%  F1=68.32%
+  MI-4+RF                   67.57%  F1=67.62%
+  Chi2-1+SVM                67.57%  F1=67.94%
+  Chi2-2+SVM                67.57%  F1=67.94%
+  Chi2-3+SVM                67.57%  F1=67.94%
+  Chi2-4+SVM                67.57%  F1=67.94%
+  Chi2-5+SVM                67.57%  F1=67.94%
+  Chi2-1+RF                 67.30%  F1=68.07%
+  Chi2-2+RF                 67.30%  F1=68.07%
+  Chi2-3+RF                 67.30%  F1=68.07%
+  Chi2-4+RF                 67.30%  F1=68.07%
+  Chi2-5+RF                 67.30%  F1=68.07%
+  MI-3+RF                   67.03%  F1=67.39%
+  MI-2+RF                   66.22%  F1=65.20%
+  Chi2-1+kNN                65.95%  F1=66.95%
+  Chi2-2+kNN                65.95%  F1=66.95%
+  Chi2-3+kNN                65.95%  F1=66.95%
+  Chi2-4+kNN                65.95%  F1=66.95%
+  Chi2-5+kNN                65.95%  F1=66.95%
+
+
+Tarih: 2026-03-12 13:16:11

@@ -1,0 +1,421 @@
+clear all; clc;
+
+% Klasör yolları (Backslashes \\ ile düzeltildi)
+folders = {
+"D:\FAKE SOUNDS COLLECTED\AYHAN HOCA PAPER İÇİN\6.veriseti\bonafide"
+"D:\FAKE SOUNDS COLLECTED\AYHAN HOCA PAPER İÇİN\6.veriseti\spoofed"
+};
+
+% Sınıf etiketleri
+class_labels = {'Fake', 'Real'};
+num_classes = length(class_labels);
+
+% MDWT için seviye sayısı (7 seviyeli DWT)
+num_levels = 7;
+
+% Özellik matrisini ve etiketleri saklamak için hücre dizileri
+all_features = [];
+all_labels = [];
+
+% Her klasördeki ses dosyalarını işleme
+for class_idx = 1:num_classes
+    folder = folders{class_idx};
+    if ~exist(folder, 'dir')
+        fprintf('HATA: Klasör bulunamadı: %s\n', folder);
+        continue;
+    end
+    
+    files = dir(fullfile(folder, '*.flac'));
+    if isempty(files)
+        fprintf('UYARI: Klasörde .wav dosyası yok: %s\n', folder);
+        continue;
+    end
+    
+    fprintf('İşleniyor: %s (%d dosya bulundu)\n', class_labels{class_idx}, length(files));
+    
+    for file_idx = 1:length(files)
+        file_path = fullfile(folder, files(file_idx).name);
+        fprintf('Dosya: %s\n', file_path);
+        
+        try
+            % Ses dosyasını oku
+            fid = fopen(file_path, 'r');
+            if fid == -1
+                error('Dosya açılamadı!');
+            end
+            fseek(fid, 44, -1); % WAV başlığını atla
+            audio = fread(fid, inf, 'int16');
+            fclose(fid);
+            fs = 44100; % Varsayılan Fs
+            audio = double(audio) / max(abs(double(audio)));
+            
+            % Sinyal uzunluğunu kontrol et (9 seviye için minimum 512 örnek)
+            if length(audio) < 2^num_levels
+                error('Sinyal çok kısa (%d < %d)!', length(audio), 2^num_levels);
+            end
+            
+            fprintf('  - Okundu: Uzunluk=%d, Fs=%d Hz\n', length(audio), fs);
+            
+            % 9 Seviyeli MDWT Uygulama
+            wavelet_name = 'sym4';
+            [C, L] = wavedec(audio, num_levels, wavelet_name);
+            
+            % 9 Düşük Geçişli Filtre Bandını (Approximation Katsayıları) Elde Etme (D1-D9)
+            bands = cell(num_levels, 1);
+            for level = 1:num_levels
+                approx_coeffs = appcoef(C, L, wavelet_name, level);
+                bands{level} = approx_coeffs;
+                fprintf('  - Seviye %d: Düşük geçişli bant uzunluğu=%d\n', level, length(approx_coeffs));
+            end
+            
+            % Her bant için TSK-LHP ile özellik çıkarma
+            band_features = [];
+            for level = 1:num_levels
+                signal = bands{level};
+                features = TSK_LHP(signal); % TSK-LHP ile özellik çıkar
+                fprintf('  - Seviye %d: Özellik vektörü oluşturuldu, uzunluk: %d\n', level, length(features));
+                band_features = [band_features, features];
+            end
+            
+            % Özellikleri ve etiketleri kaydet
+            all_features = [all_features; band_features];
+            all_labels = [all_labels; class_idx];
+        catch ME
+            fprintf('  - HATA: %s\n', ME.message);
+            continue;
+        end
+    end
+end
+
+% Özellik matrisini ve etiketleri kontrol et
+if isempty(all_features)
+    error('Hiçbir özellik vektörü oluşturulamadı!');
+end
+fprintf('Toplam özellik vektörü sayısı: %d\n', size(all_features, 1));
+fprintf('Özellik vektörü uzunluğu: %d\n', size(all_features, 2));
+
+% Excel dosyasına kaydetme
+num_hist_bins = 256; % Her histogram (signum, upper, lower) 256 uzunluğunda
+header = {};
+for level = 1:num_levels
+    header_signum = arrayfun(@(x) sprintf('Level%d_SignumHist_%d', level, x), 1:num_hist_bins, 'UniformOutput', false);
+    header_upper = arrayfun(@(x) sprintf('Level%d_UpperTernaryHist_%d', level, x), 1:num_hist_bins, 'UniformOutput', false);
+    header_lower = arrayfun(@(x) sprintf('Level%d_LowerTernaryHist_%d', level, x), 1:num_hist_bins, 'UniformOutput', false);
+    header = [header, header_signum, header_upper, header_lower];
+end
+header = [header, {'Label'}];
+
+% Veriyi tabloya dönüştür
+data_table = array2table([all_features, all_labels], 'VariableNames', header);
+
+% Excel dosyasına yaz
+output_file = 'D:\\SESLER\\TSK_LHP_MDWT_Features_9Level.xlsx';
+writetable(data_table, output_file);
+fprintf('Özellikler %s dosyasına kaydedildi.\n', output_file);
+
+% NCA ve Chi2 ile Özellik Seçimi (S₁ to S₁₀)
+num_samples = size(all_features, 1);
+num_features_per_level = 5; % Her seviye için seçilecek özellik sayısı
+num_selected_per_method = num_features_per_level * num_levels; % 5 * 9 = 45 özellik
+selected_features_nca = zeros(num_samples, num_selected_per_method * 5); % 5 NCA
+selected_features_chi2 = zeros(num_samples, num_selected_per_method * 5); % 5 Chi2
+
+% Her seviye için histogram özelliklerini ayır
+level_hist_features = cell(num_levels, 1);
+for level = 1:num_levels
+    start_idx = (level-1) * (num_hist_bins * 3) + 1; % 3 histogram (signum, upper, lower)
+    end_idx = start_idx + (num_hist_bins * 3) - 1;
+    level_hist_features{level} = all_features(:, start_idx:end_idx);
+end
+
+% 5 Defa NCA Uygula
+rng(1); % Tekrarlanabilirlik için sabit rastgele tohum
+for nca_iter = 1:5
+    fprintf('NCA Uygulama %d...\n', nca_iter);
+    start_col = (nca_iter-1) * num_selected_per_method + 1;
+    for level = 1:num_levels
+        hist_data = level_hist_features{level};
+        mdl = fscnca(hist_data, all_labels, 'Solver', 'sgd', 'Standardize', true, 'Verbose', 0);
+        weights = mdl.FeatureWeights;
+        [~, idx_nca] = sort(weights, 'descend');
+        selected_idx_nca = idx_nca(1:num_features_per_level);
+        selected_features_nca(:, start_col:start_col+num_features_per_level-1) = hist_data(:, selected_idx_nca);
+        start_col = start_col + num_features_per_level;
+    end
+end
+
+% 5 Defa Chi2 Uygula
+for chi2_iter = 1:5
+    fprintf('Chi2 Uygulama %d...\n', chi2_iter);
+    start_col = (chi2_iter-1) * num_selected_per_method + 1;
+    for level = 1:num_levels
+        hist_data = level_hist_features{level};
+        num_features = size(hist_data, 2);
+        chi2_stats = zeros(1, num_features);
+        expected = mean(hist_data, 1);
+        for f = 1:num_features
+            observed = hist_data(:, f);
+            if expected(f) == 0
+                chi2_stats(f) = 0;
+            else
+                chi2_stats(f) = sum(((observed - expected(f)).^2) ./ expected(f));
+            end
+        end
+        [~, idx_chi2] = sort(chi2_stats, 'descend');
+        selected_idx_chi2 = idx_chi2(1:num_features_per_level);
+        selected_features_chi2(:, start_col:start_col+num_features_per_level-1) = hist_data(:, selected_idx_chi2);
+        start_col = start_col + num_features_per_level;
+    end
+end
+
+% NCA ve Chi2 sonuçlarını birleştir (S₁ to S₁₀)
+selected_features = [selected_features_nca, selected_features_chi2]; % 10 * 45 sütun
+num_selected = 10; % 5 NCA + 5 Chi2
+final_features = zeros(num_samples, num_hist_bins * num_selected);
+for i = 1:num_selected
+    start_idx = (i-1) * num_hist_bins + 1;
+    end_idx = start_idx + num_hist_bins - 1;
+    selected_subset = selected_features(:, (i-1)*num_selected_per_method + 1:i*num_selected_per_method);
+    final_features(:, start_idx:end_idx) = [selected_subset, zeros(num_samples, num_hist_bins - num_selected_per_method)];
+end
+
+% Sınıflandırma (C₁ to C₁₀: 2 sınıflandırıcı, 5 vektör her biri)
+cv = cvpartition(all_labels, 'KFold', 10); % 10 katlı çapraz doğrulama
+num_vectors = 5; % 5 set özellik vektörü her sınıflandırıcı için
+num_classifiers = 2; % kNN, SVM
+accuracies = zeros(num_vectors * num_classifiers, 1); % 10 doğruluk (5 x 2)
+classifier_outcomes = cell(num_vectors * num_classifiers, 1);
+
+for vec_idx = 1:num_vectors
+    current_features = final_features(:, (vec_idx-1)*num_hist_bins + 1:vec_idx*num_hist_bins);
+    
+    % kNN (C₁ to C₅) with k=5
+    knn_accuracy = 0;
+    for fold = 1:cv.NumTestSets
+        train_idx = training(cv, fold);
+        test_idx = test(cv, fold);
+        
+        train_features = current_features(train_idx, :);
+        train_labels = all_labels(train_idx);
+        test_features = current_features(test_idx, :);
+        test_labels = all_labels(test_idx);
+        
+        mdl_knn = fitcknn(train_features, train_labels, ...
+            'NumNeighbors', 5, ...
+            'Distance', 'cityblock', ...
+            'DistanceWeight', 'equal', ...
+            'Standardize', true);
+        predicted_labels = predict(mdl_knn, test_features);
+        knn_accuracy = knn_accuracy + sum(predicted_labels == test_labels) / length(test_labels);
+    end
+    knn_accuracy = knn_accuracy / cv.NumTestSets;
+    accuracies(vec_idx) = knn_accuracy;
+    classifier_outcomes{vec_idx} = current_features;
+    fprintf('kNN Vektör %d Doğruluğu: %.2f%%\n', vec_idx, knn_accuracy * 100);
+    
+    % kNN vektörünü kaydet
+    knn_header = arrayfun(@(x) sprintf('kNN_Vec%d_Feature_%d', vec_idx, x), 1:num_hist_bins, 'UniformOutput', false);
+    knn_header = [knn_header, {'Label'}];
+    knn_data_table = array2table([current_features, all_labels], 'VariableNames', knn_header);
+    knn_output_file = sprintf('D:\\SESLER\\kNN_Vec%d_Features_10Fold_9Level_k5.xlsx', vec_idx);
+    writetable(knn_data_table, knn_output_file);
+    fprintf('kNN Vektör %d özellikleri %s dosyasına kaydedildi.\n', vec_idx, knn_output_file);
+    
+    % SVM (C₆ to C₁₀) - Unchanged (cubic kernel)
+    svm_accuracy = 0;
+    template_svm = templateSVM(...
+        'KernelFunction', 'polynomial', ...
+        'PolynomialOrder', 3, ...
+        'KernelScale', 'auto', ...
+        'BoxConstraint', 1, ...
+        'Standardize', true);
+    for fold = 1:cv.NumTestSets
+        train_idx = training(cv, fold);
+        test_idx = test(cv, fold);
+        
+        train_features = current_features(train_idx, :);
+        train_labels = all_labels(train_idx);
+        test_features = current_features(test_idx, :);
+        test_labels = all_labels(test_idx);
+        
+        mdl_svm = fitcecoc(train_features, train_labels, ...
+            'Learners', template_svm, ...
+            'Coding', 'onevsone');
+        predicted_labels = predict(mdl_svm, test_features);
+        svm_accuracy = svm_accuracy + sum(predicted_labels == test_labels) / length(test_labels);
+    end
+    svm_accuracy = svm_accuracy / cv.NumTestSets;
+    accuracies(vec_idx + num_vectors) = svm_accuracy;
+    classifier_outcomes{vec_idx + num_vectors} = current_features; % Fixed: Changed ) to }
+    fprintf('SVM Vektör %d Doğruluğu: %.2f%%\n', vec_idx, svm_accuracy * 100);
+    
+    % SVM vektörünü kaydet
+    svm_header = arrayfun(@(x) sprintf('SVM_Vec%d_Feature_%d', vec_idx, x), 1:num_hist_bins, 'UniformOutput', false);
+    svm_header = [svm_header, {'Label'}];
+    svm_data_table = array2table([current_features, all_labels], 'VariableNames', svm_header);
+    svm_output_file = sprintf('D:\\SESLER\\SVM_Vec%d_Features_10Fold_9Level.xlsx', vec_idx);
+    writetable(svm_data_table, svm_output_file);
+    fprintf('SVM Vektör %d özellikleri %s dosyasına kaydedildi.\n', vec_idx, svm_output_file);
+end
+
+% IMV ile Oy Veren Sonuçlar Oluştur (v₁ to v₁₈)
+num_voted = 18; % v₁ to v₁₈
+num_bins = 256;
+voted_features = zeros(num_samples, num_bins * num_voted);
+for vote_idx = 1:num_voted
+    % Her vᵢ için rastgele bir alt küme seç
+    selected_vectors = randperm(num_vectors * num_classifiers, 4); % 4 vektör seç (2 sınıflandırıcıdan)
+    for i = 1:num_bins
+        column_votes = zeros(num_samples, 4);
+        for v = 1:4
+            vec_idx = selected_vectors(v);
+            column_votes(:, v) = final_features(:, mod(vec_idx-1, num_vectors)*num_bins + i);
+        end
+        [~, max_idx] = max(histcounts(column_votes, 'BinMethod', 'integers'));
+        voted_features(:, (vote_idx-1)*num_bins + i) = column_votes(:, max_idx);
+    end
+end
+
+% Tüm çıktıları birleştir (C₁ to C₁₀ + v₁ to v₁₈)
+all_outcomes = [cat(2, classifier_outcomes{:}), voted_features];
+num_outcomes = size(all_outcomes, 2) / num_bins; % 10 + 18 = 28
+
+% Greedy Algoritma ile En İyi Sonucu Seç
+best_accuracy = 0;
+best_outcome = [];
+cv = cvpartition(all_labels, 'KFold', 10); % 10 katlı çapraz doğrulama
+
+for outcome_idx = 1:num_outcomes
+    current_features = all_outcomes(:, (outcome_idx-1)*num_bins + 1:outcome_idx*num_bins);
+    
+    accuracy = 0;
+    for fold = 1:cv.NumTestSets
+        train_idx = training(cv, fold);
+        test_idx = test(cv, fold);
+        
+        train_features = current_features(train_idx, :);
+        train_labels = all_labels(train_idx);
+        test_features = current_features(test_idx, :);
+        test_labels = all_labels(test_idx);
+        
+        mdl = fitcknn(train_features, train_labels, ...
+            'NumNeighbors', 5, ...
+            'Distance', 'cityblock', ...
+            'Standardize', true);
+        predicted_labels = predict(mdl, test_features);
+        accuracy = accuracy + sum(predicted_labels == test_labels) / length(test_labels);
+    end
+    accuracy = accuracy / cv.NumTestSets;
+    
+    fprintf('Outcome %d Doğruluğu: %.2f%%\n', outcome_idx, accuracy * 100);
+    
+    if accuracy > best_accuracy
+        best_accuracy = accuracy;
+        best_outcome = current_features;
+    end
+end
+
+% Sonucu kaydet
+new_header = arrayfun(@(x) sprintf('BestFeature_%d', x), 1:num_bins, 'UniformOutput', false);
+new_header = [new_header, {'Label'}];
+new_data_table = array2table([best_outcome, all_labels], 'VariableNames', new_header);
+
+output_file = 'D:\\SESLER\\Best_Fused_Features_10Fold_9Level_k5.xlsx';
+writetable(new_data_table, output_file);
+fprintf('En iyi birleştirilmiş özellikler %s dosyasına kaydedildi. Doğruluk: %.2f%%\n', output_file, best_accuracy * 100);
+
+% Nested function: TSK-LHP feature extractor
+function features = TSK_LHP(signal)
+    window_size = 16;
+    num_bins = 256;
+    
+    signal_length = length(signal);
+    if signal_length < window_size
+        fprintf('    UYARI: Sinyal çok kısa (%d < %d)\n', signal_length, window_size);
+        features = zeros(1, num_bins * 3); % Signum, upper ternary, lower ternary
+        return;
+    end
+    
+    % Adım 2.1: Sinyali 16'lık örtüşen pencerelere böl
+    num_windows = signal_length - window_size + 1;
+    signum_values = zeros(num_windows, 1);
+    upper_ternary_values = zeros(num_windows, 1);
+    lower_ternary_values = zeros(num_windows, 1);
+    
+    % Adım 2.2: Eşik değerini hesapla (standart sapmanın yarısı)
+    thresh = std(signal) / 2;
+    
+    for i = 1:num_windows
+        window = signal(i:i+window_size-1);
+        
+        % Signum ve ternary bitlerini hesapla
+        signum_bits = zeros(8, 1);
+        upper_ternary_bits = zeros(8, 1);
+        lower_ternary_bits = zeros(8, 1);
+        
+        for j = 1:8
+            o = window(j);
+            d = window(j+8);
+            
+            % Signum fonksiyonu
+            signum_bits(j) = signum(o, d);
+            
+            % Ternary fonksiyonu
+            tv = ternary(o, d, thresh);
+            upper_ternary_bits(j) = upper_ternary_bit(tv);
+            lower_ternary_bits(j) = lower_ternary_bit(tv);
+        end
+        
+        % Adım 2.3: Bitlerden ondalık değerlere dönüştür
+        signum_values(i) = sum(signum_bits .* (2.^(0:7)'));
+        upper_ternary_values(i) = sum(upper_ternary_bits .* (2.^(0:7)'));
+        lower_ternary_values(i) = sum(lower_ternary_bits .* (2.^(0:7)'));
+    end
+    
+    % Adım 2.4: Histogramları çıkar
+    hist_signum = histcounts(signum_values, 0:num_bins, 'Normalization', 'probability');
+    hist_upper = histcounts(upper_ternary_values, 0:num_bins, 'Normalization', 'probability');
+    hist_lower = histcounts(lower_ternary_values, 0:num_bins, 'Normalization', 'probability');
+    
+    % Adım 2.5: Histogramları birleştir
+    features = [hist_signum, hist_upper, hist_lower]; % 768 uzunluğunda (256 x 3)
+end
+
+% Signum fonksiyonu
+function bit = signum(o, d)
+    if (o - d) < 0
+        bit = 0;
+    else
+        bit = 1;
+    end
+end
+
+% Ternary fonksiyonu
+function tv = ternary(o, d, thresh)
+    diff = o - d;
+    if diff < -thresh
+        tv = -1;
+    elseif diff > thresh
+        tv = 1;
+    else
+        tv = 0;
+    end
+end
+
+% Upper ternary bit
+function bit = upper_ternary_bit(tv)
+    if tv == 1
+        bit = 1;
+    else
+        bit = 0;
+    end
+end
+
+% Lower ternary bit
+function bit = lower_ternary_bit(tv)
+    if tv == -1
+        bit = 1;
+    else
+        bit = 0;
+    end
+end
